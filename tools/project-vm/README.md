@@ -22,6 +22,8 @@ project-vm status
 project-vm stop
 project-vm delete-vm
 project-vm limactl list
+project-vm shell --ssh-agent
+project-vm shell --ssh-agent -- git push
 ```
 
 `start` creates and starts the VM if needed. It runs setup once unless
@@ -29,6 +31,9 @@ project-vm limactl list
 [setup.sh](setup.sh) with root
 privileges inside the VM. The script installs base packages, installs chezmoi
 for `dev`, and applies the VM dotfiles as `dev`.
+
+`shell --ssh-agent` enables host SSH agent forwarding for that shell session
+only. The VM configuration keeps agent forwarding disabled by default.
 
 `delete-vm` removes only the Lima VM instance. It leaves
 `project-vm-workspace.dmg` intact.

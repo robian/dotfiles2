@@ -21,7 +21,7 @@ usage() {
 Usage:
   $PROGRAM start [--skip-setup]
   $PROGRAM setup
-  $PROGRAM shell [-- COMMAND...]
+  $PROGRAM shell [--ssh-agent] [-- COMMAND...]
   $PROGRAM stop
   $PROGRAM status
   $PROGRAM delete-vm
@@ -89,6 +89,14 @@ shell_command() {
   printf '%s\n' "$command_line"
 }
 
+shell_eval_command() {
+  if [ "$#" -eq 1 ]; then
+    printf '%s\n' "$1"
+  else
+    shell_command "$@"
+  fi
+}
+
 hash_stream() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 | cut -d' ' -f1
@@ -131,6 +139,65 @@ instance_field() {
   instance=$1
   field=$2
   lima list "$instance" --format "{{.$field}}" --tty=false 2>/dev/null || true
+}
+
+instance_ssh_config_file() {
+  instance=$1
+  instance_field "$instance" SSHConfigFile
+}
+
+host_identity_agent() {
+  agent=${PROJECT_VM_SSH_AUTH_SOCK:-}
+  if [ -z "$agent" ]; then
+    # TODO: Once the host shell exports the actual agent socket as SSH_AUTH_SOCK,
+    # use SSH_AUTH_SOCK directly and remove this compatibility lookup. The current
+    # host SSH setup may select 1Password via IdentityAgent while SSH_AUTH_SOCK
+    # still points at an empty launchd agent.
+    agent=$(ssh -G github.com 2>/dev/null | sed -n 's/^identityagent //p' | head -n 1)
+  fi
+  if [ -z "$agent" ] || [ "$agent" = "none" ]; then
+    agent=${SSH_AUTH_SOCK:-}
+  fi
+  [ -n "$agent" ] || die "--ssh-agent requires SSH_AUTH_SOCK or PROJECT_VM_SSH_AUTH_SOCK to be set on the host"
+  printf '%s\n' "$agent"
+}
+
+ssh_agent_shell() {
+  instance=$1
+  shift
+
+  command -v ssh >/dev/null 2>&1 || die "ssh is required but was not found in PATH"
+  ssh_config=$(instance_ssh_config_file "$instance")
+  [ -n "$ssh_config" ] || die "could not find Lima SSH config for instance: $instance"
+  [ -f "$ssh_config" ] || die "Lima SSH config does not exist: $ssh_config"
+
+  agent=$(host_identity_agent)
+  host=lima-$instance
+  workdir=$(shell_quote "$WORKSPACE_MOUNT")
+  shell=$(shell_quote "$GUEST_LOGIN_SHELL")
+
+  if [ "$#" -gt 0 ]; then
+    remote="cd -- $workdir && exec $shell -lc $(shell_quote "$(shell_eval_command "$@")")"
+    env SSH_AUTH_SOCK="$agent" ssh \
+      -F "$ssh_config" \
+      -A \
+      -o ForwardAgent=yes \
+      -o ControlMaster=no \
+      -o ControlPath=none \
+      "$host" \
+      "$remote"
+  else
+    remote="cd -- $workdir && exec $shell -l"
+    env SSH_AUTH_SOCK="$agent" ssh \
+      -F "$ssh_config" \
+      -A \
+      -o ForwardAgent=yes \
+      -o ControlMaster=no \
+      -o ControlPath=none \
+      -t \
+      "$host" \
+      "$remote"
+  fi
 }
 
 ensure_instance_running() {
@@ -374,18 +441,45 @@ cmd_start() {
 }
 
 cmd_shell() {
+  forward_agent=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --ssh-agent)
+      forward_agent=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unexpected shell argument: $1"
+      ;;
+    *)
+      break
+      ;;
+    esac
+  done
+
   instance=$(resolve_instance)
   instance_exists "$instance" || die "VM instance does not exist; run '$PROGRAM start' first"
   ensure_instance_running "$instance"
 
-  if [ "$#" -gt 0 ] && [ "$1" = "--" ]; then
-    shift
+  if [ "$#" -gt 0 ]; then
+    shell_args="-lc"
+    guest_command=$(shell_eval_command "$@")
+  else
+    shell_args="-l"
+    guest_command=
   fi
 
-  if [ "$#" -gt 0 ]; then
-    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" -lc "$(shell_command "$@")"
+  if [ "$forward_agent" -eq 1 ]; then
+    ssh_agent_shell "$instance" "$@"
+  elif [ -n "$guest_command" ]; then
+    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" "$shell_args" "$guest_command"
   else
-    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" -l
+    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" "$shell_args"
   fi
 }
 

@@ -24,6 +24,7 @@ PACKAGES="
 curl
 ca-certificates
 git
+fzf
 zsh
 ncurses-bin
 build-essential
