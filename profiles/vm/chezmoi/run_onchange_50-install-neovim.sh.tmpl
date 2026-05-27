@@ -5,7 +5,9 @@ step() {
   printf '\033[1;36m==> %s\033[0m\n' "$*" >&2
 }
 
-nvim_version="v0.12.2"
+nvim_version="{{ .vm_versions.neovim }}"
+nvim_dir="$HOME/.local/opt/nvim"
+nvim_marker="$nvim_dir/.vm-version"
 
 case "$(uname -m)" in
   aarch64) arch=arm64 ;;
@@ -16,23 +18,27 @@ case "$(uname -m)" in
     ;;
 esac
 
-if [ -x "$HOME/.local/opt/nvim/bin/nvim" ]; then
+if [ -x "$nvim_dir/bin/nvim" ] && [ -f "$nvim_marker" ] && [ "$(cat "$nvim_marker")" = "$nvim_version" ]; then
   exit 0
 fi
 
 step "Installing Neovim $nvim_version"
 
 archive="$(mktemp)"
+extract_dir="$(mktemp -d)"
 log="$(mktemp)"
 if ! {
   curl -fsSL "https://github.com/neovim/neovim/releases/download/${nvim_version}/nvim-linux-${arch}.tar.gz" -o "$archive"
+  tar -C "$extract_dir" --strip-components=1 -xzf "$archive"
+  printf '%s\n' "$nvim_version" >"$extract_dir/.vm-version"
 
-  rm -rf "$HOME/.local/opt/nvim"
-  mkdir -p "$HOME/.local/opt/nvim" "$HOME/.local/bin"
-  tar -C "$HOME/.local/opt/nvim" --strip-components=1 -xzf "$archive"
-  ln -sf "$HOME/.local/opt/nvim/bin/nvim" "$HOME/.local/bin/nvim"
+  mkdir -p "$HOME/.local/opt" "$HOME/.local/bin"
+  rm -rf "$nvim_dir"
+  mv "$extract_dir" "$nvim_dir"
+  ln -sf "$nvim_dir/bin/nvim" "$HOME/.local/bin/nvim"
 } >"$log" 2>&1; then
   cat "$log" >&2
+  rm -rf "$extract_dir"
   rm -f "$archive" "$log"
   exit 1
 fi

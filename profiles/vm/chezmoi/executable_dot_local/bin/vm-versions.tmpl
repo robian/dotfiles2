@@ -1,0 +1,176 @@
+#!/usr/bin/env sh
+set -eu
+
+usage() {
+  cat <<'USAGE'
+usage: vm-versions [current|check]
+
+current  show pinned and installed versions
+check    also query upstream latest versions and flag stale pins
+USAGE
+}
+
+version_nvm="{{ .vm_versions.nvm }}"
+version_node="{{ .vm_versions.node }}"
+version_pyenv="{{ .vm_versions.pyenv }}"
+version_neovim="{{ .vm_versions.neovim }}"
+version_codex="{{ .vm_versions.codex }}"
+
+mode="${1:-current}"
+case "$mode" in
+  current | check) ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+pyenv_root="${PYENV_ROOT:-$HOME/.pyenv}"
+nvim_dir="$HOME/.local/opt/nvim"
+
+git_checkout_version() {
+  dir=$1
+  if [ ! -d "$dir/.git" ]; then
+    printf '%s' "missing"
+    return
+  fi
+
+  git -C "$dir" describe --tags --exact-match HEAD 2>/dev/null ||
+    git -C "$dir" rev-parse --short HEAD 2>/dev/null ||
+    printf '%s' "unknown"
+}
+
+current_node() {
+  if [ ! -s "$nvm_dir/nvm.sh" ]; then
+    printf '%s' "missing"
+    return
+  fi
+
+  # shellcheck disable=SC1091
+  . "$nvm_dir/nvm.sh"
+  nvm version default 2>/dev/null || printf '%s' "unknown"
+}
+
+current_neovim() {
+  if [ -f "$nvim_dir/.vm-version" ]; then
+    cat "$nvim_dir/.vm-version"
+    return
+  fi
+
+  if [ -x "$nvim_dir/bin/nvim" ]; then
+    "$nvim_dir/bin/nvim" --version 2>/dev/null | sed -n '1s/^NVIM //p'
+    return
+  fi
+
+  printf '%s' "missing"
+}
+
+current_codex() {
+  if ! command -v npm >/dev/null 2>&1; then
+    if [ -s "$nvm_dir/nvm.sh" ]; then
+      # shellcheck disable=SC1091
+      . "$nvm_dir/nvm.sh"
+      nvm use default >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    printf '%s' "missing"
+    return
+  fi
+
+  installed=$(
+    npm list -g --depth=0 @openai/codex 2>/dev/null |
+    sed -n 's/.*@openai\/codex@//p' |
+    sed -n '1p'
+  )
+
+  if [ -n "$installed" ]; then
+    printf '%s' "$installed"
+  else
+    printf '%s' "missing"
+  fi
+}
+
+latest_git_tag() {
+  repo=$1
+  git ls-remote --tags --refs "$repo" 'refs/tags/v*' 2>/dev/null |
+    sed 's#.*refs/tags/##' |
+    sort -V |
+    tail -n 1
+}
+
+latest_neovim() {
+  curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/neovim/neovim/releases/latest 2>/dev/null |
+    sed 's#.*/##'
+}
+
+latest_node() {
+  curl -fsSL https://nodejs.org/dist/index.tab 2>/dev/null |
+    awk 'NR == 2 { print $1 }'
+}
+
+latest_codex() {
+  if ! command -v npm >/dev/null 2>&1; then
+    if [ -s "$nvm_dir/nvm.sh" ]; then
+      # shellcheck disable=SC1091
+      . "$nvm_dir/nvm.sh"
+      nvm use default >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    return
+  fi
+
+  npm view @openai/codex version 2>/dev/null
+}
+
+status_for() {
+  pinned=$1
+  latest=$2
+
+  if [ "$mode" != "check" ]; then
+    printf '%s' "-"
+  elif [ -z "$latest" ]; then
+    printf '%s' "unknown"
+  elif [ "$pinned" = "$latest" ]; then
+    printf '%s' "ok"
+  else
+    printf '%s' "behind"
+  fi
+}
+
+print_row() {
+  tool=$1
+  pinned=$2
+  current=$3
+  latest=${4:-}
+
+  if [ "$mode" = "check" ]; then
+    printf '%-8s %-12s %-14s %-14s %s\n' "$tool" "$pinned" "${current:-unknown}" "${latest:-unknown}" "$(status_for "$pinned" "$latest")"
+  else
+    printf '%-8s %-12s %-14s\n' "$tool" "$pinned" "${current:-unknown}"
+  fi
+}
+
+if [ "$mode" = "check" ]; then
+  printf '%-8s %-12s %-14s %-14s %s\n' "TOOL" "PINNED" "CURRENT" "LATEST" "STATUS"
+  print_row "nvm" "$version_nvm" "$(git_checkout_version "$nvm_dir")" "$(latest_git_tag https://github.com/nvm-sh/nvm.git)"
+  print_row "node" "$version_node" "$(current_node)" "$(latest_node)"
+  print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")" "$(latest_git_tag https://github.com/pyenv/pyenv.git)"
+  print_row "nvim" "$version_neovim" "$(current_neovim)" "$(latest_neovim)"
+  print_row "codex" "$version_codex" "$(current_codex)" "$(latest_codex)"
+else
+  printf '%-8s %-12s %-14s\n' "TOOL" "PINNED" "CURRENT"
+  print_row "nvm" "$version_nvm" "$(git_checkout_version "$nvm_dir")"
+  print_row "node" "$version_node" "$(current_node)"
+  print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")"
+  print_row "nvim" "$version_neovim" "$(current_neovim)"
+  print_row "codex" "$version_codex" "$(current_codex)"
+fi

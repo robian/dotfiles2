@@ -38,6 +38,24 @@ only. The VM configuration keeps agent forwarding disabled by default.
 `delete-vm` removes only the Lima VM instance. It leaves
 `project-vm-workspace.dmg` intact.
 
+## Tool versions
+
+VM tool pins live in
+`profiles/vm/chezmoi/.chezmoidata/vm_versions.toml`. The versioned chezmoi
+installers are `run_onchange` templates, so changing one of those pins changes
+the rendered script and causes chezmoi to run that installer again on the next
+apply.
+
+Inside the VM, use:
+
+```sh
+vm-versions current
+vm-versions check
+```
+
+`current` compares the pinned versions with what is installed. `check` also
+queries upstreams and marks pins as `behind`, `ok`, or `unknown`.
+
 ## Defaults
 
 - no host source directory mount

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-codex_version="0.133.0"
+codex_version="{{ .vm_versions.codex }}"
 
 step() {
   printf '\033[1;36m==> %s\033[0m\n' "$*" >&2

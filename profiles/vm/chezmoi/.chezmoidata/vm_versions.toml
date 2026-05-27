@@ -1,0 +1,6 @@
+[vm_versions]
+nvm = "v0.40.4"
+node = "v24.15.0"
+pyenv = "v2.6.31"
+neovim = "v0.12.2"
+codex = "0.133.0"
