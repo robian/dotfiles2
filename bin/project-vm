@@ -15,13 +15,15 @@ SETUP_SCRIPT=$TOOL_ROOT/tools/project-vm/setup.sh
 WORKSPACE_MOUNT=/home/dev/workspace
 GUEST_LOGIN_SHELL=/usr/bin/zsh
 GUEST_SETUP_HASH_FILE=/var/lib/project-vm/setup-hash
+SECRET_ENV_IDENTITY_DOCUMENT=project-vm-age-identity
 
 usage() {
   cat <<EOF
 Usage:
   $PROGRAM start [--skip-setup]
   $PROGRAM setup
-  $PROGRAM shell [--ssh-agent] [-- COMMAND...]
+  $PROGRAM shell [--ssh-agent] [--env-file FILE] [--secret-env-file FILE] [-- COMMAND...]
+  $PROGRAM secret-env edit FILE
   $PROGRAM stop
   $PROGRAM status
   $PROGRAM delete-vm
@@ -31,6 +33,8 @@ Examples:
   cd /path/to/project
   $PROGRAM start
   $PROGRAM shell -- git clone https://github.com/example/repo.git
+  $PROGRAM shell --env-file .env --secret-env-file .env.age
+  $PROGRAM secret-env edit .env.age
 EOF
 }
 
@@ -41,6 +45,14 @@ die() {
 
 need_limactl() {
   command -v limactl >/dev/null 2>&1 || die "limactl is required but was not found in PATH"
+}
+
+need_op() {
+  command -v op >/dev/null 2>&1 || die "op is required but was not found in PATH"
+}
+
+need_rage() {
+  command -v rage >/dev/null 2>&1 || die "rage is required but was not found in PATH"
 }
 
 lima() {
@@ -94,6 +106,187 @@ shell_eval_command() {
     printf '%s\n' "$1"
   else
     shell_command "$@"
+  fi
+}
+
+trim_line() {
+  printf '%s\n' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+valid_env_name() {
+  expr "$1" : '[A-Za-z_][A-Za-z0-9_]*$' >/dev/null 2>&1
+}
+
+append_env_file_assignments() {
+  env_file=$1
+  assignments_file=$2
+
+  [ -f "$env_file" ] || die "env file does not exist: $env_file"
+
+  line_number=0
+  while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+    line_number=$((line_number + 1))
+    line=$(trim_line "$raw_line")
+
+    case "$line" in
+    "" | \#*) continue ;;
+    export\ *) line=$(trim_line "${line#export }") ;;
+    esac
+
+    case "$line" in
+    *=*) ;;
+    *) die "unsupported env line in $env_file:$line_number" ;;
+    esac
+
+    key=$(trim_line "${line%%=*}")
+    value=$(trim_line "${line#*=}")
+
+    valid_env_name "$key" || die "invalid env variable name in $env_file:$line_number: $key"
+
+    case "$value" in
+    \"*\")
+      case "$value" in
+      *\") value=${value#\"}; value=${value%\"} ;;
+      *) die "unterminated double-quoted value in $env_file:$line_number" ;;
+      esac
+      ;;
+    \'*\')
+      case "$value" in
+      *\') value=${value#\'}; value=${value%\'} ;;
+      *) die "unterminated single-quoted value in $env_file:$line_number" ;;
+      esac
+      ;;
+    esac
+
+    printf '%s=%s\n' "$key" "$(shell_quote "$value")" >>"$assignments_file"
+  done <"$env_file"
+}
+
+decrypt_secret_env_file() {
+  encrypted_file=$1
+  output_file=$2
+
+  [ -f "$encrypted_file" ] || die "secret env file does not exist: $encrypted_file"
+  need_op
+  need_rage
+
+  op document get "$SECRET_ENV_IDENTITY_DOCUMENT" | rage -d -i /dev/stdin -o "$output_file" "$encrypted_file"
+}
+
+append_secret_env_file_assignments() {
+  encrypted_file=$1
+  assignments_file=$2
+  plain_file=$(mktemp "${TMPDIR:-/tmp}/project-vm-secret-env.XXXXXX")
+
+  if decrypt_secret_env_file "$encrypted_file" "$plain_file"; then
+    append_env_file_assignments "$plain_file" "$assignments_file"
+    rm -f "$plain_file"
+  else
+    rm -f "$plain_file"
+    return 1
+  fi
+}
+
+secret_env_recipient() {
+  identity_file=$1
+
+  recipient=$(sed -n 's/^# public key: //p' "$identity_file" | head -n 1)
+  [ -n "$recipient" ] || die "could not find public key in 1Password document: $SECRET_ENV_IDENTITY_DOCUMENT"
+  printf '%s\n' "$recipient"
+}
+
+cmd_secret_env_edit() {
+  [ "$#" -eq 1 ] || die "usage: $PROGRAM secret-env edit FILE"
+
+  encrypted_file=$1
+  encrypted_dir=$(dirname -- "$encrypted_file")
+  encrypted_base=$(basename -- "$encrypted_file")
+  [ -d "$encrypted_dir" ] || die "directory does not exist: $encrypted_dir"
+
+  need_op
+  need_rage
+
+  identity_file=$(mktemp "${TMPDIR:-/tmp}/project-vm-age-identity.XXXXXX")
+  plain_file=$(mktemp "${TMPDIR:-/tmp}/project-vm-secret-env.XXXXXX")
+  encrypted_tmp=$(mktemp "$encrypted_dir/.$encrypted_base.XXXXXX")
+  rm -f "$encrypted_tmp"
+  trap 'rm -f "$identity_file" "$plain_file" "$encrypted_tmp"' EXIT HUP INT TERM
+
+  op document get "$SECRET_ENV_IDENTITY_DOCUMENT" >"$identity_file"
+  recipient=$(secret_env_recipient "$identity_file")
+
+  if [ -f "$encrypted_file" ]; then
+    rage -d -i "$identity_file" -o "$plain_file" "$encrypted_file"
+  else
+    {
+      printf '# Edit project VM secret environment variables below.\n'
+      printf '# Example: API_TOKEN=...\n'
+    } >"$plain_file"
+  fi
+
+  "${EDITOR:-vi}" "$plain_file"
+  append_env_file_assignments "$plain_file" /dev/null
+  rage -r "$recipient" -o "$encrypted_tmp" "$plain_file"
+  mv "$encrypted_tmp" "$encrypted_file"
+
+  rm -f "$identity_file" "$plain_file"
+  trap - EXIT HUP INT TERM
+  printf 'secret env written: %s\n' "$encrypted_file"
+}
+
+cmd_secret_env() {
+  subcmd=${1:-}
+  [ -n "$subcmd" ] || die "usage: $PROGRAM secret-env edit FILE"
+  shift
+
+  case "$subcmd" in
+  edit) cmd_secret_env_edit "$@" ;;
+  *) die "unknown secret-env command: $subcmd" ;;
+  esac
+}
+
+env_assignments_command() {
+  assignments_file=$1
+  command_line=
+
+  [ -s "$assignments_file" ] || return 0
+
+  while IFS= read -r assignment || [ -n "$assignment" ]; do
+    if [ -n "$command_line" ]; then
+      command_line="$command_line $assignment"
+    else
+      command_line=$assignment
+    fi
+  done <"$assignments_file"
+
+  printf '%s\n' "$command_line"
+}
+
+guest_shell_remote_command() {
+  assignments_file=$1
+  shift
+
+  workdir=$(shell_quote "$WORKSPACE_MOUNT")
+  shell=$(shell_quote "$GUEST_LOGIN_SHELL")
+  env_assignments=$(env_assignments_command "$assignments_file")
+
+  if [ -n "$env_assignments" ]; then
+    exec_prefix="env $env_assignments "
+  else
+    exec_prefix=
+  fi
+
+  if [ "$#" -gt 0 ]; then
+    printf 'cd -- %s && exec %s%s -lic %s\n' \
+      "$workdir" \
+      "$exec_prefix" \
+      "$shell" \
+      "$(shell_quote "$(shell_eval_command "$@")")"
+  else
+    printf 'cd -- %s && exec %s%s -l\n' \
+      "$workdir" \
+      "$exec_prefix" \
+      "$shell"
   fi
 }
 
@@ -164,6 +357,8 @@ host_identity_agent() {
 
 ssh_agent_shell() {
   instance=$1
+  assignments_file=$2
+  shift
   shift
 
   command -v ssh >/dev/null 2>&1 || die "ssh is required but was not found in PATH"
@@ -173,12 +368,12 @@ ssh_agent_shell() {
 
   agent=$(host_identity_agent)
   host=lima-$instance
-  workdir=$(shell_quote "$WORKSPACE_MOUNT")
-  shell=$(shell_quote "$GUEST_LOGIN_SHELL")
+  remote=$(guest_shell_remote_command "$assignments_file" "$@")
+  rm -f "$assignments_file"
+  trap - EXIT HUP INT TERM
 
   if [ "$#" -gt 0 ]; then
-    remote="cd -- $workdir && exec $shell -lc $(shell_quote "$(shell_eval_command "$@")")"
-    env SSH_AUTH_SOCK="$agent" ssh \
+    exec env SSH_AUTH_SOCK="$agent" ssh \
       -F "$ssh_config" \
       -A \
       -o ForwardAgent=yes \
@@ -187,8 +382,7 @@ ssh_agent_shell() {
       "$host" \
       "$remote"
   else
-    remote="cd -- $workdir && exec $shell -l"
-    env SSH_AUTH_SOCK="$agent" ssh \
+    exec env SSH_AUTH_SOCK="$agent" ssh \
       -F "$ssh_config" \
       -A \
       -o ForwardAgent=yes \
@@ -442,11 +636,25 @@ cmd_start() {
 
 cmd_shell() {
   forward_agent=0
+  assignments_file=$(mktemp "${TMPDIR:-/tmp}/project-vm-env.XXXXXX")
+  trap 'rm -f "$assignments_file"' EXIT HUP INT TERM
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
     --ssh-agent)
       forward_agent=1
+      shift
+      ;;
+    --env-file)
+      shift
+      [ "$#" -gt 0 ] || die "--env-file requires a file argument"
+      append_env_file_assignments "$1" "$assignments_file"
+      shift
+      ;;
+    --secret-env-file)
+      shift
+      [ "$#" -gt 0 ] || die "--secret-env-file requires a file argument"
+      append_secret_env_file_assignments "$1" "$assignments_file"
       shift
       ;;
     --)
@@ -466,20 +674,13 @@ cmd_shell() {
   instance_exists "$instance" || die "VM instance does not exist; run '$PROGRAM start' first"
   ensure_instance_running "$instance"
 
-  if [ "$#" -gt 0 ]; then
-    shell_args="-lc"
-    guest_command=$(shell_eval_command "$@")
-  else
-    shell_args="-l"
-    guest_command=
-  fi
-
   if [ "$forward_agent" -eq 1 ]; then
-    ssh_agent_shell "$instance" "$@"
-  elif [ -n "$guest_command" ]; then
-    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" "$shell_args" "$guest_command"
+    ssh_agent_shell "$instance" "$assignments_file" "$@"
   else
-    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" "$shell_args"
+    remote=$(guest_shell_remote_command "$assignments_file" "$@")
+    rm -f "$assignments_file"
+    trap - EXIT HUP INT TERM
+    exec limactl shell --workdir /home/dev "$instance" sh -lc "$remote"
   fi
 }
 
@@ -542,6 +743,7 @@ main() {
   start) cmd_start "$@" ;;
   setup) cmd_setup "$@" ;;
   shell) cmd_shell "$@" ;;
+  secret-env) cmd_secret_env "$@" ;;
   stop) cmd_stop "$@" ;;
   status) cmd_status "$@" ;;
   delete-vm) cmd_delete_vm "$@" ;;

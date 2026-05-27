@@ -24,6 +24,9 @@ project-vm delete-vm
 project-vm limactl list
 project-vm shell --ssh-agent
 project-vm shell --ssh-agent -- git push
+project-vm shell --env-file .env
+project-vm shell --env-file .env --secret-env-file .env.age
+project-vm secret-env edit .env.age
 ```
 
 `start` creates and starts the VM if needed. It runs setup once unless
@@ -34,6 +37,16 @@ for `dev`, and applies the VM dotfiles as `dev`.
 
 `shell --ssh-agent` enables host SSH agent forwarding for that shell session
 only. The VM configuration keeps agent forwarding disabled by default.
+
+`shell --env-file FILE` loads plaintext dotenv-style variables for that shell
+session. `shell --secret-env-file FILE` decrypts a rage-encrypted env file with
+the age identity stored in the 1Password document named
+`project-vm-age-identity`. Both flags may be passed multiple times; later files
+override earlier values.
+
+`secret-env edit FILE` creates or edits a rage-encrypted env file. It decrypts
+existing files to a temporary plaintext file, opens `$EDITOR`, validates the env
+syntax, re-encrypts the result, and removes the temporary plaintext file.
 
 `delete-vm` removes only the Lima VM instance. It leaves
 `project-vm-workspace.dmg` intact.
