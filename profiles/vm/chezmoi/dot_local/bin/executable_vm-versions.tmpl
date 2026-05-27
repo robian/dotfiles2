@@ -103,7 +103,7 @@ current_codex() {
 latest_git_tag() {
   repo=$1
   git ls-remote --tags --refs "$repo" 'refs/tags/v*' 2>/dev/null |
-    sed 's#.*refs/tags/##' |
+    sed -n 's#.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' |
     sort -V |
     tail -n 1
 }
@@ -137,6 +137,7 @@ latest_codex() {
 status_for() {
   pinned=$1
   latest=$2
+  oldest=
 
   if [ "$mode" = "offline" ]; then
     printf '%s' "-"
@@ -144,8 +145,15 @@ status_for() {
     printf '%s' "unknown"
   elif [ "$pinned" = "$latest" ]; then
     printf '%s' "ok"
+  elif [ -n "$pinned" ]; then
+    oldest=$(printf '%s\n%s\n' "$pinned" "$latest" | sort -V | sed -n '1p')
+    if [ "$oldest" = "$pinned" ]; then
+      printf '%s' "behind"
+    else
+      printf '%s' "ahead"
+    fi
   else
-    printf '%s' "behind"
+    printf '%s' "unknown"
   fi
 }
 
