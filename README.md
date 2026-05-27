@@ -124,6 +124,7 @@ The profile currently manages:
 - nvm and the pinned Node.js version
 - pyenv
 - Neovim
+- Tree-sitter CLI
 - Codex CLI
 - `vm-versions`, a helper for checking pinned and installed tool versions
 

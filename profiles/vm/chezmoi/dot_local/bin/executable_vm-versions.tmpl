@@ -14,6 +14,7 @@ version_nvm="{{ .vm_versions.nvm }}"
 version_node="{{ .vm_versions.node }}"
 version_pyenv="{{ .vm_versions.pyenv }}"
 version_neovim="{{ .vm_versions.neovim }}"
+version_tree_sitter_cli="{{ .vm_versions.tree_sitter_cli }}"
 version_codex="{{ .vm_versions.codex }}"
 
 mode="online"
@@ -73,7 +74,7 @@ current_neovim() {
   printf '%s' "missing"
 }
 
-current_codex() {
+ensure_npm() {
   if ! command -v npm >/dev/null 2>&1; then
     if [ -s "$nvm_dir/nvm.sh" ]; then
       # shellcheck disable=SC1091
@@ -82,15 +83,20 @@ current_codex() {
     fi
   fi
 
-  if ! command -v npm >/dev/null 2>&1; then
+  command -v npm >/dev/null 2>&1
+}
+
+current_npm_package() {
+  package=$1
+
+  if ! ensure_npm; then
     printf '%s' "missing"
     return
   fi
 
   installed=$(
-    npm list -g --depth=0 @openai/codex 2>/dev/null |
-    sed -n 's/.*@openai\/codex@//p' |
-    sed -n '1p'
+    npm list -g --depth=0 "$package" 2>/dev/null |
+      awk -v package="$package@" 'index($0, package) { print substr($0, index($0, package) + length(package)); exit }'
   )
 
   if [ -n "$installed" ]; then
@@ -98,6 +104,32 @@ current_codex() {
   else
     printf '%s' "missing"
   fi
+}
+
+current_codex() {
+  current_npm_package "@openai/codex"
+}
+
+current_tree_sitter_cli() {
+  current_npm_package "tree-sitter-cli"
+}
+
+latest_npm_package() {
+  package=$1
+
+  if ! ensure_npm; then
+    return
+  fi
+
+  npm view "$package" version 2>/dev/null
+}
+
+latest_codex() {
+  latest_npm_package "@openai/codex"
+}
+
+latest_tree_sitter_cli() {
+  latest_npm_package "tree-sitter-cli"
 }
 
 latest_git_tag() {
@@ -116,22 +148,6 @@ latest_neovim() {
 latest_node() {
   curl -fsSL https://nodejs.org/dist/index.tab 2>/dev/null |
     awk 'NR == 2 { print $1 }'
-}
-
-latest_codex() {
-  if ! command -v npm >/dev/null 2>&1; then
-    if [ -s "$nvm_dir/nvm.sh" ]; then
-      # shellcheck disable=SC1091
-      . "$nvm_dir/nvm.sh"
-      nvm use default >/dev/null 2>&1 || true
-    fi
-  fi
-
-  if ! command -v npm >/dev/null 2>&1; then
-    return
-  fi
-
-  npm view @openai/codex version 2>/dev/null
 }
 
 status_for() {
@@ -176,6 +192,7 @@ if [ "$mode" = "online" ]; then
   print_row "node" "$version_node" "$(current_node)" "$(latest_node)"
   print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")" "$(latest_git_tag https://github.com/pyenv/pyenv.git)"
   print_row "nvim" "$version_neovim" "$(current_neovim)" "$(latest_neovim)"
+  print_row "ts-cli" "$version_tree_sitter_cli" "$(current_tree_sitter_cli)" "$(latest_tree_sitter_cli)"
   print_row "codex" "$version_codex" "$(current_codex)" "$(latest_codex)"
 else
   printf '%-8s %-12s %-14s\n' "TOOL" "PINNED" "INSTALLED"
@@ -183,5 +200,6 @@ else
   print_row "node" "$version_node" "$(current_node)"
   print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")"
   print_row "nvim" "$version_neovim" "$(current_neovim)"
+  print_row "ts-cli" "$version_tree_sitter_cli" "$(current_tree_sitter_cli)"
   print_row "codex" "$version_codex" "$(current_codex)"
 fi
