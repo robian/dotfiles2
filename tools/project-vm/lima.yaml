@@ -12,7 +12,10 @@ mounts: []
 
 additionalDisks:
 - name: "{{WORKSPACE_DISK}}"
-  format: true
+  # Do not let Lima format this disk: its first-use check relies on the
+  # ext4 label "lima-${name}", but ext4 labels are limited to 16 bytes.
+  # The boot provision below formats the raw device only when it has no FS.
+  format: false
   fsType: ext4
 
 user:
@@ -24,6 +27,26 @@ user:
 provision:
 - mode: boot
   script: |
+    set -eu
+
+    workspace_disk="{{WORKSPACE_DISK}}"
+    disk="/dev/vdb"
+    mountpoint="/mnt/lima-$workspace_disk"
+
+    if [ ! -e "$disk" ]; then
+      echo "workspace disk device is missing: $disk" >&2
+      exit 1
+    fi
+
+    if ! blkid "$disk" >/dev/null 2>&1; then
+      mkfs.ext4 "$disk"
+    fi
+
+    install -d -m 755 "$mountpoint"
+    if ! mountpoint -q "$mountpoint"; then
+      mount -t ext4 "$disk" "$mountpoint"
+    fi
+
     if [ -f /etc/pam.d/common-session ]; then
       sed -i.bak '/pam_systemd\.so/s/^/# project-vm: disabled: /' /etc/pam.d/common-session
     fi

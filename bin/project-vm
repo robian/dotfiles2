@@ -460,7 +460,7 @@ ensure_guest_workspace() {
 disk_mount=$(shell_quote "$disk_mount")
 workspace_mount=$(shell_quote "$WORKSPACE_MOUNT")
 install -d -m 755 /home/dev
-if [ ! -d \"\$disk_mount\" ]; then
+if ! mountpoint -q \"\$disk_mount\"; then
   echo \"workspace disk is not mounted: \$disk_mount\" >&2
   exit 1
 fi
