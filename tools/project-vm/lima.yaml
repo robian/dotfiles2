@@ -1,0 +1,41 @@
+minimumLimaVersion: 2.0.0
+
+base:
+- template:_images/ubuntu-24.04
+
+vmType: vz
+cpus: 4
+memory: 6GiB
+disk: 24GiB
+
+mounts:
+- location: "{{WORKSPACE_DIR}}"
+  mountPoint: "{{WORKSPACE_MOUNT}}"
+  writable: true
+
+mountInotify: false
+
+user:
+  name: dev
+  comment: Development User
+  home: /home/dev
+  shell: /bin/bash
+
+provision:
+- mode: boot
+  script: |
+    if [ -f /etc/pam.d/common-session ]; then
+      sed -i.bak '/pam_systemd\.so/s/^/# project-vm: disabled: /' /etc/pam.d/common-session
+    fi
+
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+
+containerd:
+  system: false
+  user: false
+
+propagateProxyEnv: false

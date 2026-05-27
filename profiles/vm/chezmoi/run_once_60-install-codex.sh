@@ -1,0 +1,50 @@
+#!/usr/bin/env sh
+set -eu
+
+codex_version="0.133.0"
+
+step() {
+  printf '\033[1;36m==> %s\033[0m\n' "$*" >&2
+}
+
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+  echo "nvm is not installed at $NVM_DIR" >&2
+  exit 1
+fi
+
+. "$NVM_DIR/nvm.sh"
+
+step "Installing Codex $codex_version"
+
+log="$(mktemp)"
+if ! {
+  nvm use default
+  npm install -g --no-audit --no-fund --loglevel=error "@openai/codex@${codex_version}"
+} >"$log" 2>&1; then
+  cat "$log" >&2
+  rm -f "$log"
+  exit 1
+fi
+rm -f "$log"
+
+mkdir -p "$HOME/.local/bin"
+cat >"$HOME/.local/bin/codex" <<'CODEX'
+#!/usr/bin/env bash
+set -euo pipefail
+
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+  echo "codex wrapper: nvm is not installed at $NVM_DIR" >&2
+  exit 127
+fi
+
+. "$NVM_DIR/nvm.sh"
+
+node_bin="$(dirname "$(nvm which default)")"
+exec "$node_bin/codex" "$@"
+CODEX
+
+chmod 0755 "$HOME/.local/bin/codex"

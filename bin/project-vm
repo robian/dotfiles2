@@ -1,0 +1,465 @@
+#!/bin/sh
+set -eu
+
+PROGRAM=${0##*/}
+TOOL_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PROJECT_ROOT=$(pwd -P)
+. "$TOOL_ROOT/lib/repo-config.sh"
+
+WORKSPACE_DMG=$PROJECT_ROOT/project-vm-workspace.dmg
+DEFAULT_WORKSPACE_SIZE=10g
+
+SOURCE_TEMPLATE_FILE=$TOOL_ROOT/tools/project-vm/lima.yaml
+SETUP_SCRIPT=$TOOL_ROOT/tools/project-vm/setup.sh
+
+WORKSPACE_MOUNT=/home/dev/workspace
+GUEST_LOGIN_SHELL=/usr/bin/zsh
+GUEST_SETUP_HASH_FILE=/var/lib/project-vm/setup-hash
+
+usage() {
+  cat <<EOF
+Usage:
+  $PROGRAM start [--skip-setup]
+  $PROGRAM setup
+  $PROGRAM shell [-- COMMAND...]
+  $PROGRAM stop
+  $PROGRAM status
+  $PROGRAM delete-vm
+  $PROGRAM limactl ARGS...
+
+Examples:
+  cd /path/to/project
+  $PROGRAM start
+  $PROGRAM shell -- git clone https://github.com/example/repo.git
+EOF
+}
+
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+need_limactl() {
+  command -v limactl >/dev/null 2>&1 || die "limactl is required but was not found in PATH"
+}
+
+lima() {
+  need_limactl
+  limactl "$@"
+}
+
+ensure_state_dir() {
+  :
+}
+
+sanitize_basename() {
+  name=$(basename "$PROJECT_ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9][^a-z0-9]*/-/g; s/^-//; s/-$//')
+  [ -n "$name" ] || name=project
+  printf '%s\n' "$name" | cut -c 1-32
+}
+
+project_hash() {
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$PROJECT_ROOT" | shasum -a 256 | cut -c 1-6
+  elif command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$PROJECT_ROOT" | sha256sum | cut -c 1-6
+  else
+    printf '%s' "$PROJECT_ROOT" | cksum | cut -d' ' -f1 | cut -c 1-6
+  fi
+}
+
+create_instance_name() {
+  printf '%s-%s\n' "$(sanitize_basename)" "$(project_hash)"
+}
+
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+shell_command() {
+  command_line=
+  for arg; do
+    quoted=$(shell_quote "$arg")
+    if [ -n "$command_line" ]; then
+      command_line="$command_line $quoted"
+    else
+      command_line=$quoted
+    fi
+  done
+  printf '%s\n' "$command_line"
+}
+
+hash_stream() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  else
+    cksum | cut -d' ' -f1
+  fi
+}
+
+setup_hash() {
+  [ -f "$SETUP_SCRIPT" ] || die "missing setup script: $SETUP_SCRIPT"
+  {
+    printf 'setup-script:%s\n' "$SETUP_SCRIPT"
+    cat "$SETUP_SCRIPT"
+    printf '\nrepo-https-url:%s\n' "$REPO_HTTPS_URL"
+    printf 'repo-ssh-url:%s\n' "$REPO_SSH_URL"
+    printf 'repo-checkout:%s\n' "$REPO_CHECKOUT"
+    printf 'repo-name:%s\n' "$REPO_NAME"
+  } | hash_stream
+}
+
+resolve_instance() {
+  create_instance_name
+}
+
+volume_name() {
+  printf 'project-vm-%s-workspace\n' "$(resolve_instance)"
+}
+
+workspace_dir() {
+  printf '/Volumes/%s\n' "$(volume_name)"
+}
+
+instance_status() {
+  instance=$1
+  lima list "$instance" --format '{{.Status}}' --tty=false 2>/dev/null || true
+}
+
+instance_field() {
+  instance=$1
+  field=$2
+  lima list "$instance" --format "{{.$field}}" --tty=false 2>/dev/null || true
+}
+
+ensure_instance_running() {
+  instance=$1
+  status=$(instance_status "$instance")
+
+  case "$status" in
+  Running) return 0 ;;
+  "") die "VM instance does not exist; run '$PROGRAM start' first" ;;
+  *) die "VM instance is $status; run '$PROGRAM start' first" ;;
+  esac
+}
+
+render_template() {
+  tmp=$(mktemp "${TMPDIR:-/tmp}/project-vm-lima.XXXXXX.yaml")
+  [ -f "$SOURCE_TEMPLATE_FILE" ] || die "missing Lima source template: $SOURCE_TEMPLATE_FILE"
+  workspace_dir=$(workspace_dir)
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+    *'{{WORKSPACE_DIR}}'* | *'{{WORKSPACE_MOUNT}}'*)
+      while :; do
+        case "$line" in
+        *'{{WORKSPACE_DIR}}'*)
+          line=${line%%'{{WORKSPACE_DIR}}'*}$workspace_dir${line#*'{{WORKSPACE_DIR}}'}
+          ;;
+        *'{{WORKSPACE_MOUNT}}'*)
+          line=${line%%'{{WORKSPACE_MOUNT}}'*}$WORKSPACE_MOUNT${line#*'{{WORKSPACE_MOUNT}}'}
+          ;;
+        *) break ;;
+        esac
+      done
+      printf '%s\n' "$line" >>"$tmp"
+      ;;
+    *)
+      printf '%s\n' "$line" >>"$tmp"
+      ;;
+    esac
+  done <"$SOURCE_TEMPLATE_FILE"
+
+  printf '%s\n' "$tmp"
+}
+
+instance_exists() {
+  instance=$1
+  [ -n "$(instance_status "$instance")" ]
+}
+
+need_hdiutil() {
+  command -v hdiutil >/dev/null 2>&1 || die "hdiutil is required but was not found in PATH"
+}
+
+workspace_is_mounted() {
+  mountpoint=$(workspace_dir)
+  mount | grep -F " on $mountpoint " >/dev/null 2>&1
+}
+
+ensure_workspace_dmg() {
+  need_hdiutil
+  [ -e "$WORKSPACE_DMG" ] && return
+
+  hdiutil create \
+    -size "$DEFAULT_WORKSPACE_SIZE" \
+    -fs 'Case-sensitive APFS' \
+    -volname "$(volume_name)" \
+    "$WORKSPACE_DMG"
+}
+
+attach_workspace() {
+  need_hdiutil
+  ensure_workspace_dmg
+
+  mountpoint=$(workspace_dir)
+  if workspace_is_mounted; then
+    return
+  fi
+
+  if [ -e "$mountpoint" ]; then
+    die "workspace mountpoint already exists but is not mounted: $mountpoint"
+  fi
+
+  hdiutil attach "$WORKSPACE_DMG" -mountpoint "$mountpoint"
+  workspace_is_mounted || die "workspace DMG did not mount at expected path: $mountpoint"
+}
+
+detach_workspace() {
+  need_hdiutil
+  if workspace_is_mounted; then
+    hdiutil detach "$(workspace_dir)"
+  fi
+}
+
+ensure_initialized() {
+  [ "$#" -eq 0 ] || die "internal initialization does not accept arguments"
+
+  ensure_state_dir
+  attach_workspace
+  instance=$(resolve_instance)
+
+  if instance_exists "$instance"; then
+    return
+  fi
+
+  template=$(render_template)
+  if lima create --name "$instance" "$template" --tty=false; then
+    rm -f "$template"
+  else
+    printf 'kept failed Lima template for debugging: %s\n' "$template" >&2
+    exit 1
+  fi
+}
+
+start_instance() {
+  instance=$1
+  status=$(instance_status "$instance")
+
+  case "$status" in
+  Running) printf 'VM instance already running: %s\n' "$instance" ;;
+  "") die "VM instance does not exist; run '$PROGRAM start' first" ;;
+  *) lima start "$instance" --tty=false ;;
+  esac
+}
+
+run_setup_script() {
+  instance=$1
+  [ -f "$SETUP_SCRIPT" ] || die "missing setup script: $SETUP_SCRIPT"
+
+  {
+    printf 'REPO_HTTPS_URL=%s\n' "$(shell_quote "$REPO_HTTPS_URL")"
+    printf 'REPO_SSH_URL=%s\n' "$(shell_quote "$REPO_SSH_URL")"
+    printf 'REPO_CHECKOUT=%s\n' "$(shell_quote "$REPO_CHECKOUT")"
+    printf 'REPO_NAME=%s\n' "$(shell_quote "$REPO_NAME")"
+    cat "$SETUP_SCRIPT"
+  } | lima shell --workdir /home/dev "$instance" sudo sh -s
+}
+
+guest_setup_hash() {
+  instance=$1
+  lima shell --workdir /home/dev "$instance" sudo sh -c "cat '$GUEST_SETUP_HASH_FILE' 2>/dev/null || true"
+}
+
+write_guest_setup_hash() {
+  instance=$1
+  hash=$2
+  lima shell --workdir /home/dev "$instance" sudo sh -c "install -d -m 755 /var/lib/project-vm && printf '%s\n' $(shell_quote "$hash") > '$GUEST_SETUP_HASH_FILE'"
+}
+
+setup_state() {
+  instance=$1
+  current_hash=$(setup_hash)
+  stored_hash=$(guest_setup_hash "$instance")
+
+  if [ -z "$stored_hash" ]; then
+    printf 'missing\n'
+  elif [ "$stored_hash" = "$current_hash" ]; then
+    printf 'complete\n'
+  else
+    printf 'changed\n'
+  fi
+}
+
+install_host_terminfo() {
+  instance=$1
+  term=${TERM:-xterm-ghostty}
+  remote="/tmp/project-vm-terminfo.$$"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/project-vm-terminfo.XXXXXX")
+
+  if ! command -v infocmp >/dev/null 2>&1; then
+    rm -f "$tmp"
+    printf 'warning: infocmp not found on host; skipping terminfo install\n' >&2
+    return 0
+  fi
+
+  if ! infocmp -x "$term" >"$tmp"; then
+    rm -f "$tmp"
+    printf 'warning: terminfo not found on host for TERM=%s\n' "$term" >&2
+    return 0
+  fi
+
+  if ! lima copy "$tmp" "$instance:$remote"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
+
+  lima shell --workdir /home/dev "$instance" sh -lc '
+		set -eu
+		mkdir -p "$HOME/.terminfo"
+		log=$(mktemp)
+		if ! tic -x -o "$HOME/.terminfo" "$1" >"$log" 2>&1; then
+			cat "$log" >&2
+			rm -f "$log" "$1"
+			exit 1
+		fi
+		grep -v "older tic versions may treat the description field as an alias" "$log" >&2 || true
+		rm -f "$log" "$1"
+	' sh "$remote"
+}
+
+cmd_setup() {
+  [ "$#" -eq 0 ] || die "setup does not accept arguments"
+  instance=$(resolve_instance)
+  instance_exists "$instance" || die "VM instance does not exist; run '$PROGRAM start' first"
+  ensure_instance_running "$instance"
+
+  run_setup_script "$instance"
+  install_host_terminfo "$instance"
+  write_guest_setup_hash "$instance" "$(setup_hash)"
+  printf 'setup complete: %s\n' "$GUEST_SETUP_HASH_FILE"
+}
+
+cmd_start() {
+  skip_setup=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --skip-setup)
+      skip_setup=1
+      shift
+      ;;
+    *)
+      die "unexpected start argument: $1"
+      ;;
+    esac
+  done
+
+  ensure_initialized
+  instance=$(resolve_instance)
+  start_instance "$instance"
+
+  if [ "$skip_setup" -eq 0 ]; then
+    state=$(setup_state "$instance")
+    case "$state" in
+    missing)
+      cmd_setup
+      ;;
+    changed)
+      printf 'warning: VM setup hash differs from current setup script; not running setup automatically\n' >&2
+      ;;
+    esac
+  fi
+}
+
+cmd_shell() {
+  instance=$(resolve_instance)
+  instance_exists "$instance" || die "VM instance does not exist; run '$PROGRAM start' first"
+  ensure_instance_running "$instance"
+
+  if [ "$#" -gt 0 ] && [ "$1" = "--" ]; then
+    shift
+  fi
+
+  if [ "$#" -gt 0 ]; then
+    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" -lc "$(shell_command "$@")"
+  else
+    lima shell --workdir "$WORKSPACE_MOUNT" "$instance" "$GUEST_LOGIN_SHELL" -l
+  fi
+}
+
+cmd_stop() {
+  [ "$#" -eq 0 ] || die "stop does not accept arguments"
+  instance=$(resolve_instance)
+  instance_exists "$instance" || die "VM instance does not exist"
+  lima stop "$instance"
+  detach_workspace
+}
+
+cmd_status() {
+  [ "$#" -eq 0 ] || die "status does not accept arguments"
+  ensure_state_dir
+  instance=$(resolve_instance)
+
+  printf 'project root: %s\n' "$PROJECT_ROOT"
+  printf 'instance: %s\n' "$instance"
+  printf 'workspace image: %s\n' "$WORKSPACE_DMG"
+  printf 'workspace mount: %s\n' "$(workspace_dir)"
+  if workspace_is_mounted; then
+    printf 'workspace mounted: yes\n'
+  else
+    printf 'workspace mounted: no\n'
+  fi
+
+  if instance_exists "$instance"; then
+    status=$(instance_status "$instance")
+    if [ "$status" = "Running" ]; then
+      printf 'setup: %s\n' "$(setup_state "$instance")"
+    else
+      printf 'setup: unknown (VM is %s)\n' "$status"
+    fi
+    printf '\n'
+    lima list "$instance"
+  else
+    printf 'setup: missing\n'
+    printf '\n'
+    printf 'VM instance: missing\n'
+  fi
+}
+
+cmd_delete_vm() {
+  [ "$#" -eq 0 ] || die "delete-vm does not accept arguments"
+  instance=$(resolve_instance)
+  instance_exists "$instance" || die "VM instance does not exist"
+  lima delete "$instance"
+  printf 'workspace image preserved: %s\n' "$WORKSPACE_DMG"
+}
+
+main() {
+  cmd=${1:-}
+  [ -n "$cmd" ] || {
+    usage
+    exit 2
+  }
+  shift
+
+  case "$cmd" in
+  start) cmd_start "$@" ;;
+  setup) cmd_setup "$@" ;;
+  shell) cmd_shell "$@" ;;
+  stop) cmd_stop "$@" ;;
+  status) cmd_status "$@" ;;
+  delete-vm) cmd_delete_vm "$@" ;;
+  limactl)
+    ensure_state_dir
+    lima "$@"
+    ;;
+  -h | --help | help) usage ;;
+  *) die "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"
