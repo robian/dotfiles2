@@ -3,8 +3,8 @@ set -eu
 
 DEV_USER=${DEV_USER:-dev}
 : "${REPO_HTTPS_URL:?REPO_HTTPS_URL is required}"
-: "${REPO_CHECKOUT:?REPO_CHECKOUT is required}"
 : "${REPO_NAME:?REPO_NAME is required}"
+REPO_CHECKOUT=${REPO_CHECKOUT:-/home/$DEV_USER/.local/share/$REPO_NAME}
 
 log() {
   printf '[setup] %s\n' "$*"

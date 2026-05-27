@@ -106,7 +106,6 @@ setup_hash() {
     cat "$SETUP_SCRIPT"
     printf '\nrepo-https-url:%s\n' "$REPO_HTTPS_URL"
     printf 'repo-ssh-url:%s\n' "$REPO_SSH_URL"
-    printf 'repo-checkout:%s\n' "$REPO_CHECKOUT"
     printf 'repo-name:%s\n' "$REPO_NAME"
   } | hash_stream
 }
@@ -262,7 +261,6 @@ run_setup_script() {
   {
     printf 'REPO_HTTPS_URL=%s\n' "$(shell_quote "$REPO_HTTPS_URL")"
     printf 'REPO_SSH_URL=%s\n' "$(shell_quote "$REPO_SSH_URL")"
-    printf 'REPO_CHECKOUT=%s\n' "$(shell_quote "$REPO_CHECKOUT")"
     printf 'REPO_NAME=%s\n' "$(shell_quote "$REPO_NAME")"
     cat "$SETUP_SCRIPT"
   } | lima shell --workdir /home/dev "$instance" sudo sh -s

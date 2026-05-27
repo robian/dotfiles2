@@ -6,6 +6,7 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 . "$REPO_ROOT/lib/repo-config.sh"
 
 DOTFILES_SOURCE=${DOTFILES_SOURCE:-$SCRIPT_DIR/chezmoi}
+REPO_CHECKOUT=${REPO_CHECKOUT:-$HOME/.local/share/$REPO_NAME}
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_HTTPS_URL REPO_SSH_URL REPO_CHECKOUT
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -27,5 +28,5 @@ fi
 
 chezmoi \
   --source "$DOTFILES_SOURCE" \
-  --override-data "{\"repo\":{\"name\":\"$REPO_NAME\"}}" \
+  --override-data "{\"repo\":{\"name\":\"$REPO_NAME\",\"checkout\":\"$REPO_CHECKOUT\"}}" \
   apply

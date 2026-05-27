@@ -36,6 +36,7 @@ for `dev`, and applies the VM dotfiles as `dev`.
 ## Defaults
 
 - no host source directory mount
+- dotfiles checkout inside the guest at `/home/dev/.local/share/dotfiles2`
 - SSH agent forwarding disabled
 - public internet egress allowed
 - no networked package installation during VM boot

@@ -14,5 +14,6 @@ Host and VM development environment configuration.
 bin/project-vm start
 ```
 
-The VM setup command clones this repository into the checkout path derived from
-`lib/repo-config.sh` and runs `profiles/vm/bootstrap.sh`.
+The VM setup command clones this repository inside the guest at
+`/home/dev/.local/share/dotfiles2` by default and runs
+`profiles/vm/bootstrap.sh`.
