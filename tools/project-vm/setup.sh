@@ -29,6 +29,7 @@ zsh
 ncurses-bin
 build-essential
 postgresql-client
+ripgrep
 "
 
 export DEBIAN_FRONTEND=noninteractive
