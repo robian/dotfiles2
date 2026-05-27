@@ -49,12 +49,12 @@ apply.
 Inside the VM, use:
 
 ```sh
-vm-versions current
-vm-versions check
+vm-versions
+vm-versions --offline
 ```
 
-`current` compares the pinned versions with what is installed. `check` also
-queries upstreams and marks pins as `behind`, `ok`, or `unknown`.
+`vm-versions` shows upstream, pinned, installed, and stale status in one table.
+Use `--offline` for the fast view without upstream checks.
 
 ## Defaults
 

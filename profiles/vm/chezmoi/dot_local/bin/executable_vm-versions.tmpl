@@ -3,10 +3,10 @@ set -eu
 
 usage() {
   cat <<'USAGE'
-usage: vm-versions [current|check]
+usage: vm-versions [--offline]
 
-current  show pinned and installed versions
-check    also query upstream latest versions and flag stale pins
+Shows upstream, pinned, installed, and stale status.
+Use --offline to skip upstream checks.
 USAGE
 }
 
@@ -16,9 +16,12 @@ version_pyenv="{{ .vm_versions.pyenv }}"
 version_neovim="{{ .vm_versions.neovim }}"
 version_codex="{{ .vm_versions.codex }}"
 
-mode="${1:-current}"
-case "$mode" in
-  current | check) ;;
+mode="online"
+case "${1:-}" in
+  "") ;;
+  --offline)
+    mode="offline"
+    ;;
   -h | --help)
     usage
     exit 0
@@ -135,7 +138,7 @@ status_for() {
   pinned=$1
   latest=$2
 
-  if [ "$mode" != "check" ]; then
+  if [ "$mode" = "offline" ]; then
     printf '%s' "-"
   elif [ -z "$latest" ]; then
     printf '%s' "unknown"
@@ -152,22 +155,22 @@ print_row() {
   current=$3
   latest=${4:-}
 
-  if [ "$mode" = "check" ]; then
-    printf '%-8s %-12s %-14s %-14s %s\n' "$tool" "$pinned" "${current:-unknown}" "${latest:-unknown}" "$(status_for "$pinned" "$latest")"
+  if [ "$mode" = "online" ]; then
+    printf '%-8s %-14s %-12s %-14s %s\n' "$tool" "${latest:-unknown}" "$pinned" "${current:-unknown}" "$(status_for "$pinned" "$latest")"
   else
     printf '%-8s %-12s %-14s\n' "$tool" "$pinned" "${current:-unknown}"
   fi
 }
 
-if [ "$mode" = "check" ]; then
-  printf '%-8s %-12s %-14s %-14s %s\n' "TOOL" "PINNED" "CURRENT" "LATEST" "STATUS"
+if [ "$mode" = "online" ]; then
+  printf '%-8s %-14s %-12s %-14s %s\n' "TOOL" "UPSTREAM" "PINNED" "INSTALLED" "STATUS"
   print_row "nvm" "$version_nvm" "$(git_checkout_version "$nvm_dir")" "$(latest_git_tag https://github.com/nvm-sh/nvm.git)"
   print_row "node" "$version_node" "$(current_node)" "$(latest_node)"
   print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")" "$(latest_git_tag https://github.com/pyenv/pyenv.git)"
   print_row "nvim" "$version_neovim" "$(current_neovim)" "$(latest_neovim)"
   print_row "codex" "$version_codex" "$(current_codex)" "$(latest_codex)"
 else
-  printf '%-8s %-12s %-14s\n' "TOOL" "PINNED" "CURRENT"
+  printf '%-8s %-12s %-14s\n' "TOOL" "PINNED" "INSTALLED"
   print_row "nvm" "$version_nvm" "$(git_checkout_version "$nvm_dir")"
   print_row "node" "$version_node" "$(current_node)"
   print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")"
