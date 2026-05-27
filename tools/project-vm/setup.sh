@@ -30,6 +30,7 @@ ncurses-bin
 build-essential
 postgresql-client
 ripgrep
+unzip
 "
 
 export DEBIAN_FRONTEND=noninteractive
