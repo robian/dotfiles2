@@ -20,13 +20,10 @@ local missing = vim.tbl_filter(function(parser)
 end, treesitter_parsers)
 
 if #missing > 0 then
-	ts.install(missing, { summary = true })
-end
-
-local unwanted = vim.tbl_filter(function(parser)
-	return not vim.tbl_contains(treesitter_parsers, parser)
-end, installed)
-
-if #unwanted > 0 then
-	ts.uninstall(unwanted)
+	local ok, err = pcall(ts.install, missing, { summary = true })
+	if not ok then
+		vim.schedule(function()
+			vim.notify(("treesitter: failed to install parsers: %s"):format(err), vim.log.levels.WARN)
+		end)
+	end
 end

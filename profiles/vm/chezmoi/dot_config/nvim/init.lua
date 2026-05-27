@@ -50,33 +50,3 @@ require("blink.cmp").setup({
 		default = { "lsp", "path", "snippets", "buffer" },
 	},
 })
-vim.opt.scrolloff = 8
-vim.opt.wrap = false
-vim.opt.smartindent = true
-vim.opt.inccommand = "split"
-vim.opt.ignorecase = true
-vim.opt.smartcase = true
-vim.opt.laststatus = 3
-
-require("config.plugins")
-require("config.treesitter-parsers")
-require("config.mason")
-require("config.format")
-require("config.snacks")
-require("config.lsp")
-require("config.keymaps")
-
-vim.cmd.colorscheme("catppuccin-mocha")
-require("trouble").setup()
-require("gitsigns").setup()
-require("blink.cmp").setup({
-	keymap = {
-		preset = "default",
-		["<CR>"] = { "accept", "fallback" },
-		["<Tab>"] = { "select_next", "fallback" },
-		["<S-Tab>"] = { "select_prev", "fallback" },
-	},
-	sources = {
-		default = { "lsp", "path", "snippets", "buffer" },
-	},
-})

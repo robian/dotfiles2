@@ -21,17 +21,17 @@ local function notify(message, level)
 	end)
 end
 
-local function needs_install(pkg)
+local function needs_install(pkg, name)
 	if not pkg:is_installed() then
-		return true, false
+		return true
 	end
 
 	local has_receipt = pkg:get_receipt():is_present()
 	if not has_receipt then
-		return true, true
+		notify(("mason: %s is installed without a receipt; leaving it in place"):format(name), vim.log.levels.WARN)
 	end
 
-	return false, false
+	return false
 end
 
 local function notify_done(action, name)
@@ -55,12 +55,10 @@ registry.refresh(function(success)
 
 	for _, name in ipairs(packages) do
 		local pkg = registry.get_package(name)
-		local should_install, force = needs_install(pkg)
+		local should_install = needs_install(pkg, name)
 		if should_install then
-			local pending = force and "repairing" or "installing"
-			local done = force and "repaired" or "installed"
-			notify(("mason: %s %s"):format(pending, name), vim.log.levels.INFO)
-			pkg:install({ force = force }, notify_done(done, name))
+			notify(("mason: installing %s"):format(name), vim.log.levels.INFO)
+			pkg:install({}, notify_done("installed", name))
 		end
 	end
 

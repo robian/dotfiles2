@@ -28,6 +28,7 @@ fzf
 zsh
 ncurses-bin
 build-essential
+python3-venv
 postgresql-client
 ripgrep
 unzip
