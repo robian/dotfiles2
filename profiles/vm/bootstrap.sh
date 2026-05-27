@@ -28,5 +28,4 @@ fi
 
 chezmoi \
   --source "$DOTFILES_SOURCE" \
-  --override-data "{\"repo\":{\"name\":\"$REPO_NAME\",\"checkout\":\"$REPO_CHECKOUT\"}}" \
   apply
