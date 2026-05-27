@@ -5,7 +5,7 @@ isolated per-project development VMs on macOS with Lima.
 
 The main command is `project-vm`. From any project directory, it creates a
 project-specific Lima VM, stores that VM's writable workspace in a
-project-local APFS disk image, and mounts the workspace in the guest at
+project-specific Lima disk, and exposes the workspace in the guest at
 `/home/dev/workspace`. The host project directory is not mounted directly into
 the VM.
 
@@ -29,7 +29,7 @@ project-vm start
 project-vm shell
 ```
 
-`project-vm start` creates the project workspace disk image if needed, creates
+`project-vm start` creates the project workspace disk if needed, creates
 the Lima instance if needed, starts the VM, and runs the guest setup when the VM
 has not been set up yet.
 
@@ -56,13 +56,13 @@ project-vm limactl ARGS...
 `setup` reruns the guest setup script. It installs base packages, installs or
 updates chezmoi for `dev`, and applies the VM profile.
 
-`status` shows the host project root, VM instance name, workspace disk image,
+`status` shows the host project root, VM instance name, workspace disk,
 workspace mount, setup state, and Lima status.
 
-`stop` stops the VM and detaches the workspace disk image.
+`stop` stops the VM.
 
-`delete-vm` removes only the Lima VM instance. It preserves the project-local
-`project-vm-workspace.dmg`.
+`delete-vm` removes only the Lima VM instance. It preserves the project
+workspace disk. Manage workspace disks directly with `limactl disk`.
 
 `limactl` passes arguments through to `limactl` after resolving the project VM
 context.
@@ -145,7 +145,7 @@ vm-versions --offline
 ## Defaults
 
 - one VM instance per host project directory
-- project-local workspace image at `project-vm-workspace.dmg`
+- project-specific Lima workspace disk named after the VM instance
 - workspace mounted in the guest at `/home/dev/workspace`
 - no direct mount of the host source directory
 - dotfiles checkout inside the guest at `/home/dev/.local/share/dotfiles2`
@@ -159,7 +159,6 @@ On the host:
 
 - macOS
 - Lima, providing `limactl`
-- `hdiutil`
 - `ssh`
 - 1Password CLI `op`, only for secret env files
 - `rage`, only for secret env files

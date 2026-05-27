@@ -6,8 +6,7 @@ TOOL_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PROJECT_ROOT=$(pwd -P)
 . "$TOOL_ROOT/lib/repo-config.sh"
 
-WORKSPACE_DMG=$PROJECT_ROOT/project-vm-workspace.dmg
-DEFAULT_WORKSPACE_SIZE=10g
+DEFAULT_WORKSPACE_SIZE=10GiB
 
 SOURCE_TEMPLATE_FILE=$TOOL_ROOT/tools/project-vm/lima.yaml
 SETUP_SCRIPT=$TOOL_ROOT/tools/project-vm/setup.sh
@@ -315,12 +314,12 @@ resolve_instance() {
   create_instance_name
 }
 
-volume_name() {
-  printf 'project-vm-%s-workspace\n' "$(resolve_instance)"
+workspace_disk() {
+  resolve_instance
 }
 
-workspace_dir() {
-  printf '/Volumes/%s\n' "$(volume_name)"
+workspace_disk_mount() {
+  printf '/mnt/lima-%s\n' "$(workspace_disk)"
 }
 
 instance_status() {
@@ -408,15 +407,15 @@ ensure_instance_running() {
 render_template() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/project-vm-lima.XXXXXX.yaml")
   [ -f "$SOURCE_TEMPLATE_FILE" ] || die "missing Lima source template: $SOURCE_TEMPLATE_FILE"
-  workspace_dir=$(workspace_dir)
+  workspace_disk=$(workspace_disk)
 
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-    *'{{WORKSPACE_DIR}}'* | *'{{WORKSPACE_MOUNT}}'*)
+    *'{{WORKSPACE_DISK}}'* | *'{{WORKSPACE_MOUNT}}'*)
       while :; do
         case "$line" in
-        *'{{WORKSPACE_DIR}}'*)
-          line=${line%%'{{WORKSPACE_DIR}}'*}$workspace_dir${line#*'{{WORKSPACE_DIR}}'}
+        *'{{WORKSPACE_DISK}}'*)
+          line=${line%%'{{WORKSPACE_DISK}}'*}$workspace_disk${line#*'{{WORKSPACE_DISK}}'}
           ;;
         *'{{WORKSPACE_MOUNT}}'*)
           line=${line%%'{{WORKSPACE_MOUNT}}'*}$WORKSPACE_MOUNT${line#*'{{WORKSPACE_MOUNT}}'}
@@ -440,55 +439,44 @@ instance_exists() {
   [ -n "$(instance_status "$instance")" ]
 }
 
-need_hdiutil() {
-  command -v hdiutil >/dev/null 2>&1 || die "hdiutil is required but was not found in PATH"
+workspace_disk_exists() {
+  disk=$1
+  lima disk ls 2>/dev/null | awk 'NR > 1 { print $1 }' | grep -Fx "$disk" >/dev/null 2>&1
 }
 
-workspace_is_mounted() {
-  mountpoint=$(workspace_dir)
-  mount | grep -F " on $mountpoint " >/dev/null 2>&1
-}
-
-ensure_workspace_dmg() {
-  need_hdiutil
-  [ -e "$WORKSPACE_DMG" ] && return
-
-  hdiutil create \
-    -size "$DEFAULT_WORKSPACE_SIZE" \
-    -fs 'Case-sensitive APFS' \
-    -volname "$(volume_name)" \
-    "$WORKSPACE_DMG"
-}
-
-attach_workspace() {
-  need_hdiutil
-  ensure_workspace_dmg
-
-  mountpoint=$(workspace_dir)
-  if workspace_is_mounted; then
+ensure_workspace_disk() {
+  disk=$(workspace_disk)
+  if workspace_disk_exists "$disk"; then
     return
   fi
 
-  if [ -e "$mountpoint" ]; then
-    die "workspace mountpoint already exists but is not mounted: $mountpoint"
-  fi
-
-  hdiutil attach "$WORKSPACE_DMG" -mountpoint "$mountpoint"
-  workspace_is_mounted || die "workspace DMG did not mount at expected path: $mountpoint"
+  lima disk create "$disk" --size "$DEFAULT_WORKSPACE_SIZE" --format raw --tty=false
 }
 
-detach_workspace() {
-  need_hdiutil
-  if workspace_is_mounted; then
-    hdiutil detach "$(workspace_dir)"
-  fi
+ensure_guest_workspace() {
+  instance=$1
+  disk_mount=$(workspace_disk_mount)
+  lima shell --workdir /home/dev "$instance" sudo sh -c "set -eu
+disk_mount=$(shell_quote "$disk_mount")
+workspace_mount=$(shell_quote "$WORKSPACE_MOUNT")
+install -d -m 755 /home/dev
+if [ ! -d \"\$disk_mount\" ]; then
+  echo \"workspace disk is not mounted: \$disk_mount\" >&2
+  exit 1
+fi
+chown dev:dev \"\$disk_mount\"
+if [ -e \"\$workspace_mount\" ] && [ ! -L \"\$workspace_mount\" ]; then
+  echo \"workspace path exists and is not a symlink: \$workspace_mount\" >&2
+  exit 1
+fi
+ln -sfn \"\$disk_mount\" \"\$workspace_mount\""
 }
 
 ensure_initialized() {
   [ "$#" -eq 0 ] || die "internal initialization does not accept arguments"
 
   ensure_state_dir
-  attach_workspace
+  ensure_workspace_disk
   instance=$(resolve_instance)
 
   if instance_exists "$instance"; then
@@ -595,6 +583,7 @@ cmd_setup() {
   instance=$(resolve_instance)
   instance_exists "$instance" || die "VM instance does not exist; run '$PROGRAM start' first"
   ensure_instance_running "$instance"
+  ensure_guest_workspace "$instance"
 
   run_setup_script "$instance"
   install_host_terminfo "$instance"
@@ -620,6 +609,7 @@ cmd_start() {
   ensure_initialized
   instance=$(resolve_instance)
   start_instance "$instance"
+  ensure_guest_workspace "$instance"
 
   if [ "$skip_setup" -eq 0 ]; then
     state=$(setup_state "$instance")
@@ -673,6 +663,7 @@ cmd_shell() {
   instance=$(resolve_instance)
   instance_exists "$instance" || die "VM instance does not exist; run '$PROGRAM start' first"
   ensure_instance_running "$instance"
+  ensure_guest_workspace "$instance"
 
   if [ "$forward_agent" -eq 1 ]; then
     ssh_agent_shell "$instance" "$assignments_file" "$@"
@@ -689,7 +680,6 @@ cmd_stop() {
   instance=$(resolve_instance)
   instance_exists "$instance" || die "VM instance does not exist"
   lima stop "$instance"
-  detach_workspace
 }
 
 cmd_status() {
@@ -699,12 +689,13 @@ cmd_status() {
 
   printf 'project root: %s\n' "$PROJECT_ROOT"
   printf 'instance: %s\n' "$instance"
-  printf 'workspace image: %s\n' "$WORKSPACE_DMG"
-  printf 'workspace mount: %s\n' "$(workspace_dir)"
-  if workspace_is_mounted; then
-    printf 'workspace mounted: yes\n'
+  printf 'workspace disk: %s\n' "$(workspace_disk)"
+  printf 'workspace disk mount: %s\n' "$(workspace_disk_mount)"
+  printf 'workspace mount: %s\n' "$WORKSPACE_MOUNT"
+  if workspace_disk_exists "$(workspace_disk)"; then
+    printf 'workspace disk exists: yes\n'
   else
-    printf 'workspace mounted: no\n'
+    printf 'workspace disk exists: no\n'
   fi
 
   if instance_exists "$instance"; then
@@ -728,7 +719,7 @@ cmd_delete_vm() {
   instance=$(resolve_instance)
   instance_exists "$instance" || die "VM instance does not exist"
   lima delete "$instance"
-  printf 'workspace image preserved: %s\n' "$WORKSPACE_DMG"
+  printf 'workspace disk preserved: %s\n' "$(workspace_disk)"
 }
 
 main() {

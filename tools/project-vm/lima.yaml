@@ -8,12 +8,12 @@ cpus: 4
 memory: 6GiB
 disk: 24GiB
 
-mounts:
-- location: "{{WORKSPACE_DIR}}"
-  mountPoint: "{{WORKSPACE_MOUNT}}"
-  writable: true
+mounts: []
 
-mountInotify: false
+additionalDisks:
+- name: "{{WORKSPACE_DISK}}"
+  format: true
+  fsType: ext4
 
 user:
   name: dev
