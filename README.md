@@ -124,6 +124,7 @@ The profile currently manages:
 - Rust via rustup
 - nvm and the pinned Node.js version
 - pyenv
+- uv
 - Neovim
 - Tree-sitter CLI
 - Codex CLI

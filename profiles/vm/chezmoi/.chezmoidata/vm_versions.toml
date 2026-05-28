@@ -2,6 +2,7 @@
 nvm = "v0.40.4"
 node = "v24.15.0"
 pyenv = "v2.6.31"
+uv = "0.11.16"
 neovim = "v0.12.2"
 tree_sitter_cli = "0.26.9"
 codex = "0.134.0"

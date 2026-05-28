@@ -13,6 +13,7 @@ USAGE
 version_nvm="{{ .vm_versions.nvm }}"
 version_node="{{ .vm_versions.node }}"
 version_pyenv="{{ .vm_versions.pyenv }}"
+version_uv="{{ .vm_versions.uv }}"
 version_neovim="{{ .vm_versions.neovim }}"
 version_tree_sitter_cli="{{ .vm_versions.tree_sitter_cli }}"
 version_codex="{{ .vm_versions.codex }}"
@@ -35,6 +36,7 @@ esac
 
 nvm_dir="${NVM_DIR:-$HOME/.nvm}"
 pyenv_root="${PYENV_ROOT:-$HOME/.pyenv}"
+uv_dir="$HOME/.local/opt/uv"
 nvim_dir="$HOME/.local/opt/nvim"
 
 git_checkout_version() {
@@ -68,6 +70,20 @@ current_neovim() {
 
   if [ -x "$nvim_dir/bin/nvim" ]; then
     "$nvim_dir/bin/nvim" --version 2>/dev/null | sed -n '1s/^NVIM //p'
+    return
+  fi
+
+  printf '%s' "missing"
+}
+
+current_uv() {
+  if [ -f "$uv_dir/.vm-version" ]; then
+    cat "$uv_dir/.vm-version"
+    return
+  fi
+
+  if [ -x "$uv_dir/uv" ]; then
+    "$uv_dir/uv" --version 2>/dev/null | awk '{ print $2 }'
     return
   fi
 
@@ -145,6 +161,11 @@ latest_neovim() {
     sed 's#.*/##'
 }
 
+latest_uv() {
+  curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/astral-sh/uv/releases/latest 2>/dev/null |
+    sed 's#.*/##'
+}
+
 latest_node() {
   curl -fsSL https://nodejs.org/dist/index.tab 2>/dev/null |
     awk 'NR == 2 { print $1 }'
@@ -191,6 +212,7 @@ if [ "$mode" = "online" ]; then
   print_row "nvm" "$version_nvm" "$(git_checkout_version "$nvm_dir")" "$(latest_git_tag https://github.com/nvm-sh/nvm.git)"
   print_row "node" "$version_node" "$(current_node)" "$(latest_node)"
   print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")" "$(latest_git_tag https://github.com/pyenv/pyenv.git)"
+  print_row "uv" "$version_uv" "$(current_uv)" "$(latest_uv)"
   print_row "nvim" "$version_neovim" "$(current_neovim)" "$(latest_neovim)"
   print_row "ts-cli" "$version_tree_sitter_cli" "$(current_tree_sitter_cli)" "$(latest_tree_sitter_cli)"
   print_row "codex" "$version_codex" "$(current_codex)" "$(latest_codex)"
@@ -199,6 +221,7 @@ else
   print_row "nvm" "$version_nvm" "$(git_checkout_version "$nvm_dir")"
   print_row "node" "$version_node" "$(current_node)"
   print_row "pyenv" "$version_pyenv" "$(git_checkout_version "$pyenv_root")"
+  print_row "uv" "$version_uv" "$(current_uv)"
   print_row "nvim" "$version_neovim" "$(current_neovim)"
   print_row "ts-cli" "$version_tree_sitter_cli" "$(current_tree_sitter_cli)"
   print_row "codex" "$version_codex" "$(current_codex)"
