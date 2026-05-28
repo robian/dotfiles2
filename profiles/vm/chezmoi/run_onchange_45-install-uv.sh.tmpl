@@ -8,6 +8,9 @@ step() {
 uv_version="{{ .vm_versions.uv }}"
 uv_dir="$HOME/.local/opt/uv"
 uv_marker="$uv_dir/.vm-version"
+completion_dir="$HOME/.local/share/zsh/site-functions"
+uv_completion="$completion_dir/_uv"
+uvx_completion="$completion_dir/_uvx"
 
 case "$(uname -m)" in
   aarch64) target=aarch64-unknown-linux-gnu ;;
@@ -18,7 +21,12 @@ case "$(uname -m)" in
     ;;
 esac
 
-if [ -x "$uv_dir/uv" ] && [ -x "$uv_dir/uvx" ] && [ -f "$uv_marker" ] && [ "$(cat "$uv_marker")" = "$uv_version" ]; then
+if [ -x "$uv_dir/uv" ] &&
+  [ -x "$uv_dir/uvx" ] &&
+  [ -f "$uv_marker" ] &&
+  [ "$(cat "$uv_marker")" = "$uv_version" ] &&
+  [ -s "$uv_completion" ] &&
+  [ -s "$uvx_completion" ]; then
   exit 0
 fi
 
@@ -32,11 +40,13 @@ if ! {
   tar -C "$extract_dir" --strip-components=1 -xzf "$archive"
   printf '%s\n' "$uv_version" >"$extract_dir/.vm-version"
 
-  mkdir -p "$HOME/.local/opt" "$HOME/.local/bin"
+  mkdir -p "$HOME/.local/opt" "$HOME/.local/bin" "$completion_dir"
   rm -rf "$uv_dir"
   mv "$extract_dir" "$uv_dir"
   ln -sf "$uv_dir/uv" "$HOME/.local/bin/uv"
   ln -sf "$uv_dir/uvx" "$HOME/.local/bin/uvx"
+  "$uv_dir/uv" generate-shell-completion zsh >"$uv_completion"
+  "$uv_dir/uvx" --generate-shell-completion zsh >"$uvx_completion"
 } >"$log" 2>&1; then
   cat "$log" >&2
   rm -rf "$extract_dir"
