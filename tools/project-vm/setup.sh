@@ -32,6 +32,7 @@ python3-venv
 postgresql-client
 ripgrep
 unzip
+fd-find
 "
 
 export DEBIAN_FRONTEND=noninteractive
