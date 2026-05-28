@@ -33,7 +33,8 @@ project-vm shell
 the Lima instance if needed, starts the VM, and runs the guest setup when the VM
 has not been set up yet.
 
-`project-vm shell` opens a login shell in `/home/dev/workspace` inside the VM.
+`project-vm shell` opens a login shell in `/home/dev` inside the VM. The
+project workspace remains mounted at `/home/dev/workspace`.
 For command mode, pass the command after `--`:
 
 ```sh

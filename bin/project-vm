@@ -12,6 +12,7 @@ SOURCE_TEMPLATE_FILE=$TOOL_ROOT/tools/project-vm/lima.yaml
 SETUP_SCRIPT=$TOOL_ROOT/tools/project-vm/setup.sh
 
 WORKSPACE_MOUNT=/home/dev/workspace
+GUEST_DEFAULT_WORKDIR=/home/dev
 GUEST_LOGIN_SHELL=/usr/bin/zsh
 GUEST_SETUP_HASH_FILE=/var/lib/project-vm/setup-hash
 SECRET_ENV_IDENTITY_DOCUMENT=project-vm-age-identity
@@ -265,7 +266,7 @@ guest_shell_remote_command() {
   assignments_file=$1
   shift
 
-  workdir=$(shell_quote "$WORKSPACE_MOUNT")
+  workdir=$(shell_quote "$GUEST_DEFAULT_WORKDIR")
   shell=$(shell_quote "$GUEST_LOGIN_SHELL")
   env_assignments=$(env_assignments_command "$assignments_file")
 
